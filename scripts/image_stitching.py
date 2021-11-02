@@ -103,18 +103,20 @@ def filter_matches(matched_pts1, matched_pts2):
 
 def stitch_images(img1, img2, pts1, pts2):
     homography, _ = cv2.findHomography(pts1, pts2, cv2.RANSAC)
-    if homography is not None:
-        result = cv2.warpPerspective(img1, homography, (2 * img2.shape[1], img1.shape[0]))
-        result[:img2.shape[0], :img2.shape[1]] = img2
-        
-        return result
-    else:
+    if homography is None:
         raise ValueError('Homography could not be calculated')
+    
+    result = cv2.warpPerspective(img1, homography, (2 * img2.shape[1], img1.shape[0]))
+    result[:img2.shape[0], :img2.shape[1]] = img2
+    
+    return result
 
 
 def create_panorama(img_paths, rois, downscale_factor=4, kernel_size=3, ratio_thresh=0.15):
     stitched_img = cv2.imread(img_paths[0])
+    
     gen = zip(*[[lst[i:i + 2] for i in range(len(lst) - 1)] for lst in [img_paths, rois]])
+    
     for img_path_pair, roi_pair in tqdm(gen, total=len(img_paths) - 1):
         img_pair = [cv2.imread(path) for path in img_path_pair]
         pts1, pts2, good_matches, matched_pts1, matched_pts2 = get_matching_points(*img_pair, *roi_pair, downscale_factor=downscale_factor,
@@ -150,5 +152,16 @@ def main2():
     plt.show()
 
 
+def main3():
+    # the first image must be on the right side of the second image
+    img_paths = [f"../assets/test_images/S{i}.jpg" for i in [1, 2, 3, 5, 6]][::-1]
+    rois = [None for _ in img_paths]
+    
+    stitched_img = create_panorama(img_paths, rois, ratio_thresh=0.7)
+    
+    plt.imshow(cv2.cvtColor(stitched_img, cv2.COLOR_BGR2RGB))
+    plt.show()
+
+
 if __name__ == '__main__':
-    main2()
+    main3()
