@@ -1,3 +1,5 @@
+import math
+
 from cv2 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
@@ -106,10 +108,56 @@ def stitch_images(img1, img2, pts1, pts2):
     if homography is None:
         raise ValueError('Homography could not be calculated')
     
-    result = cv2.warpPerspective(img1, homography, (2 * img2.shape[1], img1.shape[0]))
+    height, width = img1.shape[:2]
+    # Starting top left and going clockwise
+    corners_bef = np.float32([[0, 0], [width, 0], [width, height], [0, height]])[:, None, :]
+    corners_aft = cv2.perspectiveTransform(corners_bef, homography)
+    new_width, new_height = [int(max(list(corners_aft[:, 0, i]) + [size]) - min(list(corners_aft[:, 0, i]) + [0])) for i, size in enumerate([width, height])]
+    
+    # result = cv2.warpPerspective(img1, homography, (new_width, new_height))
+    result, translate = perspective_warp(img1, homography)
+    
     result[:img2.shape[0], :img2.shape[1]] = img2
     
     return result
+
+
+def warpTwoImages(img1, img2, homography):
+    '''warp img2 to img1 with homograph H'''
+    # TODO idea of matrix multiplying homographies could work but need to exclude all these calculations here
+    corners1, corners2 = [np.float32([[0, 0], [0, h], [w, h], [w, 0]]).reshape(-1, 1, 2) for h, w in [img1.shape[:2], img2.shape[:2]]]
+    
+    corners2 = cv2.perspectiveTransform(corners2, homography)
+    corners = np.concatenate((corners1, corners2), axis=0)
+    
+    [xmin, ymin] = np.int32(corners.min(axis=0).ravel() - 0.5)
+    [xmax, ymax] = np.int32(corners.max(axis=0).ravel() + 0.5)
+    
+    t = [-xmin, -ymin]
+    translation = np.array([[1, 0, t[0]], [0, 1, t[1]], [0, 0, 1]])
+    
+    result = cv2.warpPerspective(img2, translation.dot(homography), (xmax - xmin, ymax - ymin))
+    
+    result[t[1]:img1.shape[0] + t[1], t[0]:img1.shape[1] + t[0]] = img1
+    
+    return result
+
+
+def perspective_warp(image: np.ndarray, transform: np.ndarray):
+    h, w = image.shape[:2]
+    corners_bef = np.float32([[0, 0], [w, 0], [w, h], [0, h]]).reshape(-1, 1, 2)
+    corners_aft = cv2.perspectiveTransform(corners_bef, transform)
+    xmin = math.floor(corners_aft[:, 0, 0].min())
+    ymin = math.floor(corners_aft[:, 0, 1].min())
+    xmax = math.ceil(corners_aft[:, 0, 0].max())
+    ymax = math.ceil(corners_aft[:, 0, 1].max())
+    
+    translate = np.eye(3)
+    translate[0, 2] = -xmin
+    translate[1, 2] = -ymin
+    corrected_transform = np.matmul(translate, transform)
+    
+    return cv2.warpPerspective(image, corrected_transform, (math.ceil(xmax - xmin), math.ceil(ymax - ymin))), translate
 
 
 def create_panorama(img_paths, rois, downscale_factor=4, kernel_size=3, ratio_thresh=0.15):
@@ -122,16 +170,36 @@ def create_panorama(img_paths, rois, downscale_factor=4, kernel_size=3, ratio_th
         pts1, pts2, good_matches, matched_pts1, matched_pts2 = get_matching_points(*img_pair, *roi_pair, downscale_factor=downscale_factor,
                                                                                    kernel_size=kernel_size, ratio_thresh=ratio_thresh)
         matched_pts1, matched_pts2 = filter_matches(matched_pts1, matched_pts2)
-        stitched_img = stitch_images(stitched_img, img_pair[1], matched_pts1, matched_pts2)
+        # stitched_img = stitch_images(stitched_img, img_pair[1], matched_pts1, matched_pts2)
+        stitched_img = warpTwoImages(stitched_img, img_pair[1], matched_pts1, matched_pts2)
     
     return stitched_img
 
 
+def create_panorama2(img_paths, rois, downscale_factor=4, kernel_size=3, ratio_thresh=0.15, ransac_threshold=4):
+    last_img = cv2.imread(img_paths[0])
+    last_roi = rois[0]
+    
+    for img_path, new_roi in tqdm(zip(img_paths[1:], rois[1:]), total=len(img_paths) - 1):
+        new_img = cv2.imread(img_path)
+        pts1, pts2, good_matches, matched_pts1, matched_pts2 = get_matching_points(last_img, new_img, last_roi, new_roi, downscale_factor=downscale_factor,
+                                                                                   kernel_size=kernel_size, ratio_thresh=ratio_thresh)
+        matched_pts1, matched_pts2 = filter_matches(matched_pts1, matched_pts2)
+        
+        homography, _ = cv2.findHomography(matched_pts2.reshape(-1, 1, 2), matched_pts1.reshape(-1, 1, 2), cv2.RANSAC, ransac_threshold)
+        if homography is None:
+            raise ValueError('Homography could not be calculated')
+        
+        last_img = warpTwoImages(last_img, new_img, homography)
+        last_roi = new_roi
+    # TODO make black parts transparent so that new images which are in the background can fill out missing spots
+    return last_img
+
+
 def main():
     # the first image must be on the right side of the second image
-    
-    img1 = cv2.imread("../assets/test_images/2Hill.JPG")
-    img2 = cv2.imread("../assets/test_images/1Hill.JPG")
+    img1 = cv2.imread("../assets/test_images/1Hill.JPG")
+    img2 = cv2.imread("../assets/test_images/2Hill.JPG")
     
     pts1, pts2, good_matches, matched_pts1, matched_pts2 = get_matching_points(img1, img2, ratio_thresh=0.6)
     print(len(good_matches))
@@ -146,7 +214,7 @@ def main2():
     img_paths = [f"../assets/frames/image_sequence{f'{i:06d}'}.png" for i in range(2, 110, 4)]
     rois = [(0, 373, 1920, 710) for _ in img_paths]
     
-    stitched_img = create_panorama(img_paths, rois, ratio_thresh=0.7)
+    stitched_img = create_panorama2(img_paths, rois, ratio_thresh=0.7)
     
     plt.imshow(cv2.cvtColor(stitched_img, cv2.COLOR_BGR2RGB))
     plt.show()
@@ -154,12 +222,25 @@ def main2():
 
 def main3():
     # the first image must be on the right side of the second image
-    img_paths = [f"../assets/test_images/S{i}.jpg" for i in [1, 2, 3, 5, 6]][::-1]
+    img_paths = [f"../assets/test_images/{i}Hill.jpg" for i in range(1, 4)]
     rois = [None for _ in img_paths]
     
-    stitched_img = create_panorama(img_paths, rois, ratio_thresh=0.7)
+    stitched_img = create_panorama2(img_paths, rois, ratio_thresh=0.7)
     
     plt.imshow(cv2.cvtColor(stitched_img, cv2.COLOR_BGR2RGB))
+    plt.show()
+
+
+def main4():
+    img1 = cv2.imread("../assets/test_images/1Hill.JPG")
+    img2 = cv2.imread("../assets/test_images/2Hill.JPG")
+    
+    pts1, pts2, good_matches, matched_pts1, matched_pts2 = get_matching_points(img1, img2, ratio_thresh=0.6)
+    
+    # homography, _ = cv2.findHomography(matched_pts2.reshape(-1, 1, 2), matched_pts1.reshape(-1, 1, 2), cv2.RANSAC, 5.0)
+    
+    result = warpTwoImages(img1, img2, matched_pts1, matched_pts2)
+    plt.imshow(cv2.cvtColor(result, cv2.COLOR_BGR2RGB))
     plt.show()
 
 
