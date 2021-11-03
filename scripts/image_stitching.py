@@ -163,5 +163,17 @@ def main3():
     plt.show()
 
 
+def main4():
+    # the first image must be on the right side of the second image
+    img_paths = [f"../assets/drone_images/DSC{f'{i:05d}'}.JPG" for i in range(798, 803)][::-1]
+    # img_paths = [f"../assets/drone_images/DSC{f'{i:05d}'}.JPG" for i in range(798, 810)][::-1]
+    rois = [None for _ in img_paths]
+    
+    stitched_img = create_panorama(img_paths, rois, ratio_thresh=0.7, downscale_factor=6)
+    
+    plt.imshow(cv2.cvtColor(stitched_img, cv2.COLOR_BGR2RGB))
+    plt.show()
+
+
 if __name__ == '__main__':
-    main3()
+    main4()
