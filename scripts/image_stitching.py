@@ -112,6 +112,25 @@ def stitch_images(img1, img2, pts1, pts2):
     return result
 
 
+def stitch_images2(img1, img2, H):
+    '''warp img2 to img1 with homograph H'''
+    h1, w1 = img1.shape[:2]
+    h2, w2 = img2.shape[:2]
+    pts1 = np.float32([[0, 0], [0, h1], [w1, h1], [w1, 0]]).reshape(-1, 1, 2)
+    pts2 = np.float32([[0, 0], [0, h2], [w2, h2], [w2, 0]]).reshape(-1, 1, 2)
+    pts2_ = cv2.perspectiveTransform(pts2, H)
+    pts = np.concatenate((pts1, pts2_), axis=0)
+    [xmin, ymin] = np.int32(pts.min(axis=0).ravel() - 0.5)
+    [xmax, ymax] = np.int32(pts.max(axis=0).ravel() + 0.5)
+    t = [-xmin, -ymin]
+    Ht = np.array([[1, 0, t[0]], [0, 1, t[1]], [0, 0, 1]])  # translate
+    
+    result = cv2.warpPerspective(img2, Ht.dot(H), (xmax - xmin, ymax - ymin))
+    result[t[1]:h1 + t[1], t[0]:w1 + t[0]] = img1
+    
+    return result, t
+
+
 def create_panorama(img_paths, rois, downscale_factor=4, kernel_size=3, ratio_thresh=0.15):
     stitched_img = cv2.imread(img_paths[0])
     
@@ -123,6 +142,33 @@ def create_panorama(img_paths, rois, downscale_factor=4, kernel_size=3, ratio_th
                                                                                    kernel_size=kernel_size, ratio_thresh=ratio_thresh)
         matched_pts1, matched_pts2 = filter_matches(matched_pts1, matched_pts2)
         stitched_img = stitch_images(stitched_img, img_pair[1], matched_pts1, matched_pts2)
+    
+    return stitched_img
+
+
+def create_panorama2(img_paths, rois, downscale_factor=4, kernel_size=3, ratio_thresh=0.15, ransac_thresh=4, filter=False):
+    """
+    Image paths must be left to right
+    """
+    img_paths, rois = img_paths[::-1], rois[::-1]  # reverse list so that images come from right to left
+    
+    stitched_img, last_translation = None, None
+    
+    gen = zip(*[[lst[i:i + 2] for i in range(len(lst) - 1)] for lst in [img_paths, rois]])
+    
+    for (img_path_right, img_path_left), (roi_right, roi_left) in tqdm(gen, total=len(img_paths) - 1):
+        img_right, img_left = cv2.imread(img_path_right), cv2.imread(img_path_left)
+        
+        _, _, _, matched_pts_left, matched_pts_right = get_matching_points(img_left, img_right, roi1=roi_right, roi2=roi_left,
+                                                                           downscale_factor=downscale_factor, kernel_size=kernel_size,
+                                                                           ratio_thresh=ratio_thresh)
+        if filter:
+            matched_pts_left, matched_pts_right = filter_matches(matched_pts_left, matched_pts_right)
+        
+        homography_left_right, _ = cv2.findHomography(matched_pts_right + ([0, 0] if last_translation is None else last_translation), matched_pts_left,
+                                                      cv2.RANSAC, ransacReprojThreshold=ransac_thresh)
+        
+        stitched_img, last_translation = stitch_images2(img_left, img_right if stitched_img is None else stitched_img, homography_left_right)
     
     return stitched_img
 
@@ -175,5 +221,36 @@ def main4():
     plt.show()
 
 
+def main5():
+    img_paths = [f"../assets/drone_images_orig/DSC{f'{i:05d}'}.JPG" for i in range(798, 810)]
+    rois = [None for _ in img_paths]
+    
+    RATIO_THRESH = 0.7
+    DOWNSCALE_FACTOR = 4
+    KERNEL_SIZE = 3
+    RANSAC_THRESH = 4
+    
+    stitched_img = create_panorama2(img_paths, rois, downscale_factor=DOWNSCALE_FACTOR, kernel_size=KERNEL_SIZE, ratio_thresh=RATIO_THRESH,
+                                    ransac_thresh=RANSAC_THRESH)
+    plt.imshow(cv2.cvtColor(stitched_img, cv2.COLOR_BGR2RGB))
+    plt.show()
+
+
+def main6():
+    img_paths = [f"../assets/frames/image_sequence{f'{i:06d}'}.png" for i in range(2, 110, 5)][::-1]
+    # rois = [(0, 373, 1920, 710) for _ in img_paths]
+    rois = [(0, 373, 1920, 710) for _ in img_paths]
+    
+    RATIO_THRESH = 0.8
+    DOWNSCALE_FACTOR = 4
+    KERNEL_SIZE = 3
+    RANSAC_THRESH = 5
+    
+    stitched_img = create_panorama2(img_paths, rois, downscale_factor=DOWNSCALE_FACTOR, kernel_size=KERNEL_SIZE, ratio_thresh=RATIO_THRESH,
+                                    ransac_thresh=RANSAC_THRESH)
+    plt.imshow(cv2.cvtColor(stitched_img, cv2.COLOR_BGR2RGB))
+    plt.show()
+
+
 if __name__ == '__main__':
-    main4()
+    main6()
