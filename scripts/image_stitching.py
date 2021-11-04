@@ -175,5 +175,43 @@ def main4():
     plt.show()
 
 
+def main5():
+    img_paths = [f"../assets/drone_images_orig/DSC{f'{i:05d}'}.JPG" for i in range(798, 810)]
+    rois = [None for _ in img_paths]
+    
+    RATIO_THRESH = 0.7
+    DOWNSCALE_FACTOR = 4
+    KERNEL_SIZE = 3
+    RANSAC_THRESH = 4
+    MAX_SIZE = 5000
+    
+    stitched_img = create_panorama2(img_paths, rois, downscale_factor=DOWNSCALE_FACTOR, kernel_size=KERNEL_SIZE, ratio_thresh=RATIO_THRESH,
+                                    ransac_thresh=RANSAC_THRESH)
+    
+    div = stitched_img.shape[np.argmax(stitched_img.shape[:2])] / MAX_SIZE
+    
+    stitched_img = cv2.resize(stitched_img, (int(stitched_img.shape[1] / div), int(stitched_img.shape[0] / div))) if MAX_SIZE is not None else stitched_img
+    cv2.imwrite('../assets/results/stitched_drone_small.jpg', stitched_img)
+    # plt.imshow(cv2.cvtColor(stitched_img, cv2.COLOR_BGR2RGB))
+    # plt.show()
+    pass
+
+
+def main6():
+    img_paths = [f"../assets/frames/image_sequence{f'{i:06d}'}.png" for i in range(2, 110, 5)][::-1]
+    # rois = [(0, 373, 1920, 710) for _ in img_paths]
+    rois = [(0, 373, 1920, 710) for _ in img_paths]
+    
+    RATIO_THRESH = 0.8
+    DOWNSCALE_FACTOR = 4
+    KERNEL_SIZE = 3
+    RANSAC_THRESH = 5
+    
+    stitched_img = create_panorama2(img_paths, rois, downscale_factor=DOWNSCALE_FACTOR, kernel_size=KERNEL_SIZE, ratio_thresh=RATIO_THRESH,
+                                    ransac_thresh=RANSAC_THRESH)
+    plt.imshow(cv2.cvtColor(stitched_img, cv2.COLOR_BGR2RGB))
+    plt.show()
+
+
 if __name__ == '__main__':
-    main4()
+    main5()
