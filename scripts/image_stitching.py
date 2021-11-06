@@ -5,9 +5,9 @@ from scipy.spatial.distance import cosine
 from tqdm import tqdm
 
 
-def prepare_img(img, roi=None, downscale_factor=4, kernel_size=3):
+def prepare_img(img: np.array, roi=None, downscale_factor=4, kernel_size=3):
     """
-    Prepare image for keypoint matching
+    Prepares image for keypoint matching by cropping, shrinking and blurring image
     :param img: Image in BGR format
     :param roi: Region of interest to crop image to in format x0, y0, x1, y1
     :param downscale_factor: Factor to downscale image
@@ -37,7 +37,16 @@ def get_good_matches(ref_descs, descs, ratio_thresh=0.15):
     return good_matches
 
 
-def plot_matches(img1, img2, pts1, pts2, matches):
+def plot_matches(img1: np.array, img2: np.array, pts1, pts2, matches):
+    """
+    Plots the matches of two images
+    :param img1:
+    :param img2:
+    :param pts1:
+    :param pts2:
+    :param matches:
+    :return:
+    """
     ref_kps = [cv2.KeyPoint(*pt, 50) for pt in pts1]
     kps = [cv2.KeyPoint(*pt, 50) for pt in pts2]
     
@@ -92,17 +101,40 @@ def get_matching_points(img1, img2, roi1=None, roi2=None, downscale_factor=4, ke
     return pss[0], pss[1], good_matches, matched_pts1, matched_pts2
 
 
-def filter_matches(matched_pts1, matched_pts2):
+def filter_matches_w_cosine_sim(matched_pts1, matched_pts2):
+    """
+    Filters outlier matches based on cosine similarity
+    :param matched_pts1: Matched points of first image
+    :param matched_pts2: Matched points of second image
+    :return: Filtered points and mask
+    """
+    
+    # Calculate distances between all pairs of matched points
     dists = [cosine(matched_pt1, matched_pt2) for matched_pt1, matched_pt2 in zip(matched_pts1, matched_pts2)]
+    
+    # Calculate Interquartile Range
     q75, q25 = np.percentile(dists, [75, 25])
     iqr = q75 - q25
-    mask = (dists > q25 - 1.5 * iqr) & (dists < q75 + 1.5 * iqr)
     
-    return matched_pts1[mask], matched_pts2[mask]
+    # Create mask and filter matched points
+    mask = (dists > q25 - 1.5 * iqr) & (dists < q75 + 1.5 * iqr)
+    matched_pts1, matched_pts2 = matched_pts1[mask], matched_pts2[mask]
+    
+    return matched_pts1, matched_pts2, mask
 
 
-def stitch_images(img1, img2, pts1, pts2):
-    homography, _ = cv2.findHomography(pts1, pts2, cv2.RANSAC)
+def stitch_images(img1, img2, matched_pts1, matched_pts2):
+    """
+    Stitches images by using the homography which is calculated based on matched points of the images
+    :param img1: First image which is on the left side
+    :param img2: Second image which is on the right side
+    :param matched_pts1: Matched points of first image
+    :param matched_pts2: Matched points of second image
+    :return:
+    """
+    
+    # Calculate homography based on the matched points. Needs at least 4 points
+    homography, _ = cv2.findHomography(matched_pts1, matched_pts2, cv2.RANSAC)
     if homography is None:
         raise ValueError('Homography could not be calculated')
     
@@ -140,7 +172,7 @@ def create_panorama(img_paths, rois, downscale_factor=4, kernel_size=3, ratio_th
         img_pair = [cv2.imread(path) for path in img_path_pair]
         pts1, pts2, good_matches, matched_pts1, matched_pts2 = get_matching_points(*img_pair, *roi_pair, downscale_factor=downscale_factor,
                                                                                    kernel_size=kernel_size, ratio_thresh=ratio_thresh)
-        matched_pts1, matched_pts2 = filter_matches(matched_pts1, matched_pts2)
+        matched_pts1, matched_pts2, _ = filter_matches_w_cosine_sim(matched_pts1, matched_pts2)
         stitched_img = stitch_images(stitched_img, img_pair[1], matched_pts1, matched_pts2)
     
     return stitched_img
@@ -163,7 +195,7 @@ def create_panorama2(img_paths, rois, downscale_factor=4, kernel_size=3, ratio_t
                                                                            downscale_factor=downscale_factor, kernel_size=kernel_size,
                                                                            ratio_thresh=ratio_thresh)
         if filter:
-            matched_pts_left, matched_pts_right = filter_matches(matched_pts_left, matched_pts_right)
+            matched_pts_left, matched_pts_right, _ = filter_matches_w_cosine_sim(matched_pts_left, matched_pts_right)
         
         homography_left_right, _ = cv2.findHomography(matched_pts_right + ([0, 0] if last_translation is None else last_translation), matched_pts_left,
                                                       cv2.RANSAC, ransacReprojThreshold=ransac_thresh)
@@ -252,5 +284,22 @@ def main6():
     plt.show()
 
 
+def main7():
+    img_paths = [f"../assets/drone_images_orig/DSC{f'{i:05d}'}.JPG" for i in range(798, 800)]
+    rois = [None for _ in img_paths]
+    
+    RATIO_THRESH = 0.7
+    DOWNSCALE_FACTOR = 4
+    KERNEL_SIZE = 3
+    RANSAC_THRESH = 4
+    
+    stitched_img = create_panorama2(img_paths, rois, downscale_factor=DOWNSCALE_FACTOR, kernel_size=KERNEL_SIZE, ratio_thresh=RATIO_THRESH,
+                                    ransac_thresh=RANSAC_THRESH)
+    cv2.imwrite('../assets/results/stitched_drone2.jpg', stitched_img)
+    # plt.imshow(cv2.cvtColor(stitched_img, cv2.COLOR_BGR2RGB))
+    # plt.show()
+    pass
+
+
 if __name__ == '__main__':
-    main6()
+    main7()
