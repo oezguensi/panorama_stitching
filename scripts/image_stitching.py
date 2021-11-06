@@ -213,5 +213,19 @@ def main6():
     plt.show()
 
 
+def main7():
+    img_paths = [f"../assets/drone_images_orig/DSC{f'{i:05d}'}.JPG" for i in range(798, 810)]
+    rois = [None for _ in img_paths]
+    
+    RATIO_THRESH = 0.7
+    DOWNSCALE_FACTOR = 4
+    KERNEL_SIZE = 3
+    
+    stitched_img = create_panorama(img_paths, rois, downscale_factor=DOWNSCALE_FACTOR, kernel_size=KERNEL_SIZE, ratio_thresh=RATIO_THRESH)
+    
+    plt.imshow(cv2.cvtColor(stitched_img, cv2.COLOR_BGR2RGB))
+    plt.show()
+
+
 if __name__ == '__main__':
-    main5()
+    main7()
